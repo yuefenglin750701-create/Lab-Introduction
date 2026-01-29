@@ -1,0 +1,524 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>實驗室後台管理系統 (Admin Dashboard)</title>
+    
+    <!-- 0. Global Error Handler -->
+    <script>
+        window.onerror = function(msg, url, lineNo, columnNo, error) {
+            console.error('Global Error:', msg, error);
+            if (msg.indexOf("Script error") > -1) return true;
+            return false;
+        };
+    </script>
+
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- 1. Database Abstraction Layer -->
+    <script>
+        window.appId = 'default-app-id';
+
+        const localDB = {
+            get: (key) => {
+                try { return JSON.parse(localStorage.getItem('smsmp_' + key) || '[]'); } catch (e) { return []; }
+            },
+            set: (key, data) => {
+                try { localStorage.setItem('smsmp_' + key, JSON.stringify(data)); return true; } catch (e) { alert("儲存空間已滿"); return false; }
+            }
+        };
+
+        window.dbOps = {
+            mode: 'LOCAL',
+            ready: true,
+            signIn: async () => true,
+            onAuth: (cb) => { setTimeout(() => cb({ uid: 'local-admin', email: 'admin@local' }), 100); return () => {}; },
+            fetch: async (colName) => {
+                const data = localDB.get(colName);
+                return Array.isArray(data) ? data : [];
+            },
+            add: async (colName, data) => {
+                const list = localDB.get(colName);
+                const newItem = { ...data, id: 'loc_' + Date.now(), createdAt: Date.now() };
+                list.push(newItem);
+                localDB.set(colName, list);
+                return newItem;
+            },
+            update: async (colName, id, data) => {
+                const list = localDB.get(colName);
+                const idx = list.findIndex(i => i.id === id);
+                if (idx !== -1) {
+                    list[idx] = { ...list[idx], ...data };
+                    localDB.set(colName, list);
+                }
+            },
+            delete: async (colName, id) => {
+                const list = localDB.get(colName);
+                localDB.set(colName, list.filter(i => i.id !== id));
+            },
+            batchAdd: async (colName, items) => {
+                const list = localDB.get(colName);
+                const newItems = items.map((item, idx) => ({
+                    ...item,
+                    id: 'batch_' + Date.now() + '_' + idx,
+                    createdAt: item.createdAt || (Date.now() - idx * 100)
+                }));
+                localDB.set(colName, [...list, ...newItems]);
+            },
+            initDefaults: async (defaultData) => {
+                for (const [key, items] of Object.entries(defaultData)) {
+                    if (localDB.get(key).length === 0) {
+                        const newItems = items.map((i, idx) => ({ ...i, id: `init_${idx}`, createdAt: Date.now() - (idx * 1000) }));
+                        localDB.set(key, newItems);
+                    }
+                }
+            }
+        };
+    </script>
+
+    <!-- 2. Firebase SDKs -->
+    <script type="module">
+        (async () => {
+            try {
+                if (typeof __firebase_config === 'undefined' || !__firebase_config) throw new Error("No Config");
+                
+                const { initializeApp } = await import("https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js");
+                const { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } = await import("https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js");
+                const { getFirestore, collection, addDoc, getDocs, doc, updateDoc, deleteDoc, writeBatch } = await import("https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js");
+
+                const app = initializeApp(JSON.parse(__firebase_config));
+                const auth = getAuth(app);
+                const db = getFirestore(app);
+                const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+                
+                window.dbOps = {
+                    mode: 'FIREBASE',
+                    ready: true,
+                    signIn: async () => {
+                        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                            await signInWithCustomToken(auth, __initial_auth_token);
+                        } else {
+                            await signInAnonymously(auth);
+                        }
+                    },
+                    onAuth: (cb) => onAuthStateChanged(auth, cb),
+                    fetch: async (colName) => {
+                        const colRef = collection(db, 'artifacts', appId, 'public', 'data', colName);
+                        const snapshot = await getDocs(colRef);
+                        return snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+                    },
+                    add: async (colName, data) => {
+                        const colRef = collection(db, 'artifacts', appId, 'public', 'data', colName);
+                        await addDoc(colRef, { ...data, createdAt: data.createdAt || Date.now() });
+                    },
+                    update: async (colName, id, data) => {
+                        const docRef = doc(db, 'artifacts', appId, 'public', 'data', colName, id);
+                        await updateDoc(docRef, data);
+                    },
+                    delete: async (colName, id) => {
+                        const docRef = doc(db, 'artifacts', appId, 'public', 'data', colName, id);
+                        await deleteDoc(docRef);
+                    },
+                    batchAdd: async (colName, items) => {
+                        const batch = writeBatch(db);
+                        const colRef = collection(db, 'artifacts', appId, 'public', 'data', colName);
+                        items.forEach((item, idx) => {
+                             const docRef = doc(colRef);
+                             const data = { ...item, createdAt: item.createdAt || (Date.now() - idx * 100) };
+                             batch.set(docRef, data);
+                        });
+                        await batch.commit();
+                    },
+                    initDefaults: async (defaultData) => {
+                        const batch = writeBatch(db);
+                        for (const [key, items] of Object.entries(defaultData)) {
+                            const colRef = collection(db, 'artifacts', appId, 'public', 'data', key);
+                            const snapshot = await getDocs(colRef);
+                            if (snapshot.empty) {
+                                items.forEach((item, idx) => {
+                                    const docRef = doc(colRef);
+                                    batch.set(docRef, { ...item, createdAt: Date.now() - (idx * 1000) });
+                                });
+                            }
+                        }
+                        await batch.commit();
+                    }
+                };
+                console.log("🔥 Firebase Connected");
+            } catch (e) {
+                console.warn("⚠️ Firebase failed, using LOCAL mode.");
+            }
+        })();
+    </script>
+</head>
+<body class="bg-gray-100 font-sans text-slate-800">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useMemo, Component } = React;
+
+        class ErrorBoundary extends Component {
+            constructor(props) { super(props); this.state = { hasError: false }; }
+            static getDerivedStateFromError(error) { return { hasError: true }; }
+            render() {
+                if (this.state.hasError) {
+                    return <div className="min-h-screen flex items-center justify-center bg-red-50"><div className="bg-white p-6 rounded shadow text-center text-red-600">系統發生錯誤，請重新整理</div></div>;
+                }
+                return this.props.children;
+            }
+        }
+
+        const CRED_KEY_USER = 'smsmp_admin_user';
+        const CRED_KEY_PASS = 'smsmp_admin_pass';
+        const DEFAULT_USER = 'Yflin';
+        const DEFAULT_PASS = '0701';
+
+        const getCredentials = () => ({
+            username: localStorage.getItem(CRED_KEY_USER) || DEFAULT_USER,
+            password: localStorage.getItem(CRED_KEY_PASS) || DEFAULT_PASS
+        });
+
+        const updateCredentials = (u, p) => { localStorage.setItem(CRED_KEY_USER, u); localStorage.setItem(CRED_KEY_PASS, p); };
+
+        const defaultData = {
+            news: [{ date: "2025-11-06", title: "榮獲台灣精密工程學會 專題與論文獎 佳作", tag: "Award" }],
+            projects: [{ type: "government", year: "2025", title: "NSTC-114 計畫", role: "主持人" }],
+            members: [{ type: 'pi', name: "林岳鋒", year: "", research: "創新高效能加工" }],
+            gallery: [],
+            publications: [{ year: "2025", title: "Scalable Real-time Energy Monitoring...", venue: "Sensors" }]
+        };
+
+        const TAB_NAMES = {
+            news: '最新消息',
+            projects: '歷年計畫',
+            members: '成員管理',
+            publications: '發表論文',
+            gallery: '生活寫真'
+        };
+
+        const FolderIcon = () => (
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-16 h-16 text-yellow-400 mb-2 drop-shadow-sm group-hover:scale-110 transition-transform">
+                <path d="M19.5 21a3 3 0 0 0 3-3v-4.5a3 3 0 0 0-3-3h-15a3 3 0 0 0-3 3V18a3 3 0 0 0 3 3h15ZM1.5 10.146V6a3 3 0 0 1 3-3h5.379a2.25 2.25 0 0 1 1.59.659l2.122 2.121c.14.141.331.22.53.22H19.5a3 3 0 0 1 3 3v1.146A4.483 4.483 0 0 0 19.5 9h-15a4.483 4.483 0 0 0-3 1.146Z" />
+            </svg>
+        );
+
+        const LoginForm = ({ onLogin }) => {
+            const [u, setU] = useState('');
+            const [p, setP] = useState('');
+            const [err, setErr] = useState('');
+            const handleSubmit = (e) => {
+                e.preventDefault();
+                const creds = getCredentials();
+                if (u === creds.username && p === creds.password) onLogin();
+                else setErr('帳號或密碼錯誤');
+            };
+            return (
+                <div className="min-h-screen flex items-center justify-center bg-gray-100 p-4">
+                    <div className="bg-white p-8 rounded-lg shadow-lg w-full max-w-sm">
+                        <h2 className="text-xl font-bold mb-6 text-center">後台登入</h2>
+                        <form onSubmit={handleSubmit} className="space-y-4">
+                            <input className="w-full border p-2 rounded" placeholder="帳號" value={u} onChange={e=>setU(e.target.value)} required />
+                            <input className="w-full border p-2 rounded" type="password" placeholder="密碼" value={p} onChange={e=>setP(e.target.value)} required />
+                            {err && <p className="text-red-500 text-center text-sm">{err}</p>}
+                            <button className="w-full bg-blue-600 text-white p-2 rounded hover:bg-blue-700">登入</button>
+                        </form>
+                    </div>
+                </div>
+            );
+        };
+
+        const EditorModal = ({ activeTab, initData, onSave, onBatchSave, onClose }) => {
+            const [formData, setFormData] = useState({});
+            const [galleryImages, setGalleryImages] = useState([]);
+            const [coverIndex, setCoverIndex] = useState(0);
+
+            useEffect(() => {
+                const d = { ...initData };
+                if (activeTab === 'members' && !d.type) d.type = 'master';
+                if (!d.id) {
+                    if (activeTab === 'projects') d.type = 'government';
+                    if (activeTab === 'members') d.year = '碩一';
+                    if (activeTab === 'news') d.tag = 'Activity';
+                }
+                setFormData(d);
+                if (activeTab === 'gallery') {
+                    setGalleryImages(d.src ? [{src: d.src, id: 'init'}] : []);
+                    setCoverIndex(0);
+                }
+            }, [initData, activeTab]);
+
+            const handleChange = (e) => setFormData(prev => ({ ...prev, [e.target.name]: e.target.value }));
+            
+            const handleFiles = (e) => {
+                Array.from(e.target.files).forEach(file => {
+                    if (file.size > 800 * 1024) { alert('檔案過大 (Max 800KB)'); return; }
+                    const reader = new FileReader();
+                    reader.onload = () => {
+                        if (activeTab === 'gallery') {
+                            setGalleryImages(prev => [...prev, { src: reader.result, id: Math.random() }]);
+                        } else {
+                            const field = activeTab === 'members' ? 'photo' : 'image';
+                            setFormData(prev => ({ ...prev, [field]: reader.result }));
+                        }
+                    };
+                    reader.readAsDataURL(file);
+                });
+            };
+
+            const handlePaste = (e) => {
+                if (activeTab !== 'gallery') return;
+                const items = e.clipboardData.items;
+                for (let i = 0; i < items.length; i++) {
+                    if (items[i].type.indexOf("image") !== -1) {
+                        const blob = items[i].getAsFile();
+                        const reader = new FileReader();
+                        reader.onload = () => setGalleryImages(prev => [...prev, { src: reader.result, id: Math.random() }]);
+                        reader.readAsDataURL(blob);
+                    }
+                }
+            };
+
+            const handleSubmit = async (e) => {
+                e.preventDefault();
+                if (activeTab === 'gallery' && !formData.id && galleryImages.length > 0) {
+                    const items = galleryImages.map((img, idx) => {
+                        const offset = idx === coverIndex ? 0 : (idx + 1) * 1000;
+                        return { ...formData, src: img.src, createdAt: Date.now() - offset };
+                    });
+                    if(await onBatchSave(items)) onClose();
+                } else {
+                    if (activeTab === 'gallery' && galleryImages.length > 0) formData.src = galleryImages[0].src;
+                    if(await onSave(formData)) onClose();
+                }
+            };
+
+            const isMember = activeTab === 'members';
+            const isGallery = activeTab === 'gallery';
+            
+            return (
+                <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onPaste={handlePaste}>
+                    <div className="bg-white rounded-lg shadow-xl w-full max-w-xl max-h-[90vh] overflow-y-auto">
+                        <form onSubmit={handleSubmit} className="p-6 space-y-4">
+                            <h3 className="text-xl font-bold">{formData.id ? '編輯' : '新增'} {isGallery ? '(相簿模式)' : ''}</h3>
+                            <div>
+                                <label className="block text-sm font-bold mb-1">{isMember ? '姓名' : '標題'}</label>
+                                <input required name={isMember ? 'name' : 'title'} value={(isMember ? formData.name : formData.title) || ''} onChange={handleChange} className="w-full border p-2 rounded" />
+                                {isGallery && <p className="text-xs text-gray-500 mt-1">相同標題的照片會自動歸類為同一本相簿。</p>}
+                            </div>
+                            {isMember && (
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div>
+                                        <label className="block text-sm font-bold mb-1">身分</label>
+                                        <select name="type" value={formData.type} onChange={handleChange} className="w-full border p-2 rounded">
+                                            <option value="pi">指導教授</option>
+                                            <option value="phd">博士生</option>
+                                            <option value="master">碩士生</option>
+                                            <option value="alumni">畢業校友</option>
+                                        </select>
+                                    </div>
+                                    <div>
+                                        {formData.type === 'alumni' ? (
+                                            <>
+                                                <label className="block text-sm font-bold mb-1">畢業級別 (e.g. 110)</label>
+                                                <input name="classYear" value={formData.classYear||''} onChange={handleChange} className="w-full border p-2 rounded" placeholder="110" />
+                                            </>
+                                        ) : (formData.type !== 'pi' && (
+                                            <>
+                                                <label className="block text-sm font-bold mb-1">年級 (e.g. 碩一)</label>
+                                                <select name="year" value={formData.year||''} onChange={handleChange} className="w-full border p-2 rounded">
+                                                    {["碩一","碩二","碩三","博一","博二","博三","博四","博五"].map(y=><option key={y} value={y}>{y}</option>)}
+                                                </select>
+                                            </>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                            {activeTab === 'news' && <input type="date" name="date" value={formData.date||''} onChange={handleChange} className="w-full border p-2 rounded" />}
+                            {isGallery ? (
+                                <div className="border-2 border-dashed p-4 rounded bg-gray-50">
+                                    <div className="flex justify-between mb-2">
+                                        <label className="font-bold text-sm">相簿照片 (多選/貼上)</label>
+                                        <span className="text-xs bg-green-100 text-green-800 px-2 rounded">點擊設為封面</span>
+                                    </div>
+                                    <input type="file" accept="image/*" multiple onChange={handleFiles} className="mb-2 w-full text-sm" />
+                                    <div className="grid grid-cols-4 gap-2">
+                                        {galleryImages.map((img, idx) => (
+                                            <div key={idx} onClick={() => setCoverIndex(idx)} className={`relative aspect-square cursor-pointer border-2 ${idx===coverIndex ? 'border-green-500' : 'border-transparent'}`}>
+                                                <img src={img.src} className="w-full h-full object-cover" />
+                                                {idx===coverIndex && <div className="absolute top-0 left-0 bg-green-500 text-white text-[10px] px-1">封面</div>}
+                                                <button type="button" onClick={(e)=>{e.stopPropagation();setGalleryImages(prev=>prev.filter((_,i)=>i!==idx))}} className="absolute top-0 right-0 bg-red-500 text-white w-5 h-5 flex items-center justify-center rounded-bl">×</button>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            ) : (
+                                ['news', 'members'].includes(activeTab) && (
+                                    <div>
+                                        <label className="block text-sm font-bold mb-1">圖片</label>
+                                        <input type="file" accept="image/*" onChange={handleFiles} className="w-full border p-2 rounded text-sm" />
+                                        {formData[activeTab==='members'?'photo':'image'] && <img src={formData[activeTab==='members'?'photo':'image']} className="h-20 mt-2 border rounded" />}
+                                    </div>
+                                )
+                            )}
+                            {!isGallery && !isMember && activeTab !== 'news' && (
+                                <>
+                                    <input name="role" placeholder="擔任角色 / 說明" value={formData.role||formData.desc||''} onChange={handleChange} className="w-full border p-2 rounded" />
+                                    <input name="year" placeholder="年份" value={formData.year||''} onChange={handleChange} className="w-full border p-2 rounded" />
+                                </>
+                            )}
+                            {isMember && <textarea name="research" placeholder="研究領域 / 簡介" value={formData.research||''} onChange={handleChange} className="w-full border p-2 rounded h-20" />}
+                            <div className="flex justify-end gap-2 pt-4">
+                                <button type="button" onClick={onClose} className="px-4 py-2 border rounded">取消</button>
+                                <button type="submit" className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">儲存</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            );
+        };
+
+        const AdminApp = () => {
+            const [isLoggedIn, setIsLoggedIn] = useState(false);
+            const [user, setUser] = useState(null);
+            const [activeTab, setActiveTab] = useState('news');
+            const [dataList, setDataList] = useState([]);
+            const [loading, setLoading] = useState(false);
+            const [viewingAlbum, setViewingAlbum] = useState(null); 
+            const [isEditorOpen, setIsEditorOpen] = useState(false);
+            const [editItem, setEditItem] = useState({});
+            
+            const albumGroups = useMemo(() => {
+                if (activeTab !== 'gallery') return {};
+                const groups = {};
+                (dataList || []).forEach(item => {
+                    const t = item.title || '(未命名)';
+                    if (!groups[t]) groups[t] = [];
+                    groups[t].push(item);
+                });
+                return groups;
+            }, [dataList, activeTab]);
+
+            const displayList = useMemo(() => {
+                if (activeTab === 'gallery' && viewingAlbum) {
+                    return (dataList || []).filter(d => (d.title || '(未命名)') === viewingAlbum);
+                }
+                return dataList || [];
+            }, [dataList, activeTab, viewingAlbum]);
+
+            useEffect(() => {
+                if (isLoggedIn) {
+                    const t = setTimeout(() => { if (!user) setUser({ uid: 'fallback' }); }, 3000);
+                    window.dbOps.signIn().catch(e => console.warn(e));
+                    window.dbOps.onAuth(u => { clearTimeout(t); if(u) setUser(u); });
+                    return () => clearTimeout(t);
+                }
+            }, [isLoggedIn]);
+
+            useEffect(() => { if (user) loadData(); }, [activeTab, user]);
+
+            const loadData = async () => {
+                setLoading(true);
+                try {
+                    const list = await window.dbOps.fetch(activeTab);
+                    list.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+                    setDataList(list);
+                } catch(e) { console.error(e); }
+                setLoading(false);
+            };
+
+            const handleSave = async (data) => {
+                if (data.id) await window.dbOps.update(activeTab, data.id, data);
+                else await window.dbOps.add(activeTab, data);
+                loadData();
+                return true;
+            };
+
+            const handleBatchSave = async (items) => {
+                await window.dbOps.batchAdd(activeTab, items);
+                loadData();
+                return true;
+            };
+
+            const handleDelete = async (id) => {
+                if (confirm("確定刪除？")) {
+                    await window.dbOps.delete(activeTab, id);
+                    loadData();
+                }
+            };
+
+            if (!isLoggedIn) return <LoginForm onLogin={() => setIsLoggedIn(true)} />;
+            if (!user) return <div className="min-h-screen flex items-center justify-center text-gray-500">連接資料庫中...</div>;
+
+            return (
+                <div className="min-h-screen flex flex-col md:flex-row">
+                    <div className="w-full md:w-64 bg-slate-800 text-white p-6 flex-shrink-0">
+                        <h1 className="text-xl font-bold mb-8">實驗室後台</h1>
+                        <nav className="space-y-2">
+                            {Object.keys(TAB_NAMES).map(t => (
+                                <button key={t} onClick={() => { setActiveTab(t); setViewingAlbum(null); }} className={`w-full text-left px-4 py-2 rounded ${activeTab===t ? 'bg-blue-600' : 'hover:bg-slate-700'}`}>{TAB_NAMES[t]}</button>
+                            ))}
+                        </nav>
+                        <button onClick={() => window.dbOps.initDefaults(defaultData).then(loadData)} className="mt-8 text-xs text-gray-400 hover:text-white">重置範例資料</button>
+                    </div>
+                    
+                    <div className="flex-grow p-8 overflow-y-auto">
+                        <div className="flex justify-between items-center mb-6">
+                            <h2 className="text-2xl font-bold flex items-center gap-2">
+                                {activeTab === 'gallery' && viewingAlbum && <button onClick={() => setViewingAlbum(null)} className="text-blue-500 hover:underline">←</button>}
+                                {activeTab === 'gallery' && viewingAlbum ? viewingAlbum : TAB_NAMES[activeTab]}
+                            </h2>
+                            <button onClick={() => { setEditItem(viewingAlbum ? {title: viewingAlbum} : {}); setIsEditorOpen(true); }} className="bg-green-600 text-white px-4 py-2 rounded shadow hover:bg-green-700">+ 新增</button>
+                        </div>
+
+                        {loading ? <p>載入中...</p> : (
+                            <div className="bg-white rounded shadow p-6">
+                                {activeTab === 'gallery' && !viewingAlbum ? (
+                                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                                        {Object.entries(albumGroups).map(([title, items]) => (
+                                            <div key={title} onClick={() => setViewingAlbum(title)} className="border rounded p-4 cursor-pointer hover:bg-blue-50 flex flex-col items-center text-center">
+                                                <FolderIcon />
+                                                <span className="font-bold">{title}</span>
+                                                <span className="text-xs text-gray-500">{items.length} 張</span>
+                                            </div>
+                                        ))}
+                                        {Object.keys(albumGroups).length === 0 && <p className="col-span-full text-center text-gray-400">尚無相簿</p>}
+                                    </div>
+                                ) : (
+                                    <table className="w-full text-left">
+                                        <thead><tr className="border-b text-gray-500"><th className="p-3">標題 / 內容</th><th className="p-3">操作</th></tr></thead>
+                                        <tbody>
+                                            {displayList.map(item => (
+                                                <tr key={item.id} className="border-b hover:bg-gray-50">
+                                                    <td className="p-3">
+                                                        <div className="font-bold">{item.title || item.name}</div>
+                                                        <div className="text-xs text-gray-500 truncate max-w-md">{item.desc || item.research}</div>
+                                                        {(item.src || item.photo || item.image) && <span className="text-[10px] bg-green-100 text-green-800 px-1 rounded">IMG</span>}
+                                                    </td>
+                                                    <td className="p-3">
+                                                        <button onClick={() => { setEditItem(item); setIsEditorOpen(true); }} className="text-blue-600 mr-3">編輯</button>
+                                                        <button onClick={() => handleDelete(item.id)} className="text-red-600">刪除</button>
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                            {displayList.length === 0 && <tr><td colSpan="2" className="p-4 text-center text-gray-400">無資料</td></tr>}
+                                        </tbody>
+                                    </table>
+                                )}
+                            </div>
+                        )}
+                    </div>
+                    
+                    {isEditorOpen && <EditorModal activeTab={activeTab} initData={editItem} onSave={handleSave} onBatchSave={handleBatchSave} onClose={() => setIsEditorOpen(false)} />}
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<ErrorBoundary><AdminApp /></ErrorBoundary>);
+    </script>
+</body>
+</html>
