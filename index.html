@@ -18,15 +18,6 @@
 
     <script src="https://cdn.tailwindcss.com"></script>
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-
-<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-    <script crossorigin src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-
-    <script src="config.js"></script>
-    <script>
-        // Initialize global variables to prevent "undefined" errors
-        window.isLocal = true;
-
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script crossorigin src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
@@ -34,7 +25,7 @@
     <script>
         // Initialize global variables to prevent "undefined" errors
         window.isLocal = true;
-        window.appId = 'default-app-id';
+        window.appId = 'default-app-id'; // 確保前後台使用相同的 App ID
         
         // Define Local Mode Fallback
         window.enableLocalMode = () => {
@@ -65,8 +56,28 @@
     <script type="module">
         (async () => {
             try {
-                if (typeof __firebase_config === 'undefined' || !__firebase_config) {
-                    throw new Error("Firebase config is missing");
+                // -----------------------------------------------------------
+                // ★★★ Github Pages 部署設定 ★★★
+                // 請將您的 Firebase Config 填入下方 userFirebaseConfig 物件中
+                // 這樣在 Github Pages 上才能連線到雲端資料庫
+                // -----------------------------------------------------------
+                const userFirebaseConfig = {
+                    apiKey: "AIzaSyB-3Pl_9_lQUUyfEzULjgnfgB8Xbivo5rY",
+                    authDomain: "lab-website-40cb1.firebaseapp.com",
+                    projectId: "lab-website-40cb1",
+                    storageBucket: "lab-website-40cb1.firebasestorage.app",
+                    messagingSenderId: "44092173556",
+                    appId: "1:44092173556:web:c8283c28b229c01d4e42a1",
+                    measurementId: "G-MYBL65WHRM"
+                };
+
+                let firebaseConfig;
+                if (userFirebaseConfig.apiKey) {
+                    firebaseConfig = userFirebaseConfig; // 使用使用者填入的設定
+                } else if (typeof __firebase_config !== 'undefined') {
+                    firebaseConfig = JSON.parse(__firebase_config); // 使用環境變數 (Canvas 預覽用)
+                } else {
+                    throw new Error("Firebase config is missing"); // 兩者皆無，切換回本地模式
                 }
 
                 // Dynamic Import with precise error handling
@@ -74,7 +85,6 @@
                 const { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } = await import("https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js");
                 const { getFirestore, collection, onSnapshot, query } = await import("https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js");
 
-                const firebaseConfig = JSON.parse(__firebase_config);
                 const app = initializeApp(firebaseConfig);
                 window.auth = getAuth(app);
                 window.db = getFirestore(app);
@@ -137,7 +147,7 @@
         
         /* Tree View Styles */
         /* Fixed: Use fit-content + margin auto for perfect centering that doesn't clip on overflow */
-        .tree ul { padding-top: 20px; position: relative; transition: all 0.5s; display: flex; width: fit-content; margin: 0 auto; }
+        .tree ul { padding-top: 20px; position: relative; transition: all 0.5s; display: flex; justify-content: center; width: max-content; min-width: 100%; margin: 0 auto; }
         .tree li { float: left; text-align: center; list-style-type: none; position: relative; padding: 20px 5px 0 5px; transition: all 0.5s; }
         .tree li::before, .tree li::after { content: ''; position: absolute; top: 0; right: 50%; border-top: 1px solid #ccc; width: 50%; height: 20px; }
         .tree li::after { right: auto; left: 50%; border-left: 1px solid #ccc; }
@@ -601,7 +611,12 @@
               <div className="max-w-7xl mx-auto px-4 text-center">
                 <p className="font-bold text-slate-900 mb-2">{labInfo.name}</p>
                 <p className="text-slate-500 text-sm mb-4">{labInfo.englishName}</p>
-                <p className="text-slate-400 text-xs">© {new Date().getFullYear()} National Chin-Yi University of Technology. All Rights Reserved.</p>
+                <div className="text-slate-400 text-xs relative inline-block">
+                    © {new Date().getFullYear()} National Chin-Yi University of Technology. All Rights Reserved.
+                    <a href="./admin.html" className="absolute -right-6 top-0 text-slate-200 hover:text-slate-400 p-1" title="後台管理">
+                        <Settings className="w-3 h-3" />
+                    </a>
+                </div>
               </div>
             </footer>
           );
@@ -745,7 +760,7 @@
                     {/* Background Image for Projects Header */}
                     <div className="absolute inset-0 z-0">
                       <img 
-                        src="project_history_bg.jpg" 
+                        src="過往_0.jpg" 
                         alt="Projects Background" 
                         className="w-full h-full object-cover" 
                         onError={(e) => {
@@ -896,8 +911,23 @@
 
               return (
                 <div className="min-h-screen bg-slate-100 pb-20 fade-in-section">
-                  <div className="bg-slate-900 text-white pt-24 pb-12 px-4">
-                    <div className="max-w-7xl mx-auto px-4 flex flex-col md:flex-row justify-between items-center">
+                  <div className="relative bg-slate-900 text-white pt-24 pb-12 px-4 overflow-hidden">
+                     {/* Background Image for Members Header */}
+                     <div className="absolute inset-0 z-0">
+                         <img 
+                             src="成員_0.jpg" 
+                             alt="Members Background" 
+                             className="w-full h-full object-cover" 
+                             onError={(e) => {
+                                 e.target.style.display = 'none';
+                                 e.target.parentElement.style.backgroundColor = '#0f172a';
+                             }}
+                         />
+                         {/* Overlay */}
+                         <div className="absolute inset-0 bg-slate-900/80 mix-blend-multiply"></div>
+                     </div>
+
+                    <div className="max-w-7xl mx-auto px-4 flex flex-col md:flex-row justify-between items-center relative z-10">
                         <div>
                             <button onClick={() => handleNavClick('home')} className="flex items-center text-blue-300 hover:text-white mb-2 transition-colors group"><ArrowLeft className="w-5 h-5 mr-2 group-hover:-translate-x-1 transition-transform" />返回首頁</button>
                             <h1 className="text-3xl md:text-4xl font-bold flex items-center"><Users className="w-10 h-10 mr-4 text-blue-500" />實驗室成員</h1>
@@ -951,7 +981,7 @@
 
                             <div className="grid gap-8 md:grid-cols-2 lg:grid-cols-3">
                                 {loading ? <div>載入中...</div> : filteredMembers.map(member => (
-                                    <div key={member.id} className="bg-slate-100 rounded-xl overflow-hidden shadow-sm border border-slate-200 hover:shadow-xl transition-all duration-300 group flex flex-col h-full transform hover:-translate-y-2 cursor-pointer" onClick={() => { setSelectedMember(member); }}>
+                                    <div key={member.id} className="bg-white rounded-xl overflow-hidden shadow-sm border border-slate-200 hover:shadow-xl transition-all duration-300 group flex flex-col h-full transform hover:-translate-y-2 cursor-pointer" onClick={() => { setSelectedMember(member); }}>
                                             <div className="p-6 text-center border-b border-slate-100 bg-slate-50/50">
                                                 <div className="w-32 h-32 bg-white rounded-full mx-auto mb-4 flex items-center justify-center text-slate-300 border-4 border-white shadow-sm overflow-hidden">
                                                     {member.photo ? <img src={member.photo} alt={member.name} className="w-full h-full object-cover" /> : <User className="w-16 h-16" />}
@@ -1099,7 +1129,7 @@
           };
 
           return (
-            <div className="min-h-screen bg-slate-50 font-sans text-slate-800">
+            <div className="min-h-screen bg-slate-100 font-sans text-slate-800">
               <Navigation />
               {currentPage === 'home' && <HomeView />}
               {currentPage === 'projects' && <ProjectsView />}
@@ -1114,10 +1144,5 @@
         const root = ReactDOM.createRoot(document.getElementById('root'));
         root.render(<LabWebsite />);
     </script>
-
-<div style="text-align: center; padding: 10px; opacity: 0.3;">
-        <a href="admin.html" style="text-decoration: none; color: #94a3b8; font-size: 12px;">Admin Login</a>
-    </div>
-
 </body>
 </html>

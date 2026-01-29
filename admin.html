@@ -19,124 +19,119 @@
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     
-    <!-- 1. Database Abstraction Layer -->
+    <!-- 1. Sync Fallback Logic -->
     <script>
+        window.isLocal = true;
         window.appId = 'default-app-id';
-
-        const localDB = {
-            get: (key) => {
+        
+        window.enableLocalMode = () => {
+            console.log("Initializing Local Mode...");
+            window.isLocal = true;
+            const getLocal = (key) => {
                 try { return JSON.parse(localStorage.getItem('smsmp_' + key) || '[]'); } catch (e) { return []; }
-            },
-            set: (key, data) => {
-                try { localStorage.setItem('smsmp_' + key, JSON.stringify(data)); return true; } catch (e) { alert("儲存空間已滿"); return false; }
-            }
-        };
+            };
+            const setLocal = (key, data) => localStorage.setItem('smsmp_' + key, JSON.stringify(data));
 
-        window.dbOps = {
-            mode: 'LOCAL',
-            ready: true,
-            signIn: async () => true,
-            onAuth: (cb) => { setTimeout(() => cb({ uid: 'local-admin', email: 'admin@local' }), 100); return () => {}; },
-            fetch: async (colName) => {
-                const data = localDB.get(colName);
-                return Array.isArray(data) ? data : [];
-            },
-            add: async (colName, data) => {
-                const list = localDB.get(colName);
-                const newItem = { ...data, id: 'loc_' + Date.now(), createdAt: Date.now() };
-                list.push(newItem);
-                localDB.set(colName, list);
-                return newItem;
-            },
-            update: async (colName, id, data) => {
-                const list = localDB.get(colName);
-                const idx = list.findIndex(i => i.id === id);
-                if (idx !== -1) {
-                    list[idx] = { ...list[idx], ...data };
-                    localDB.set(colName, list);
-                }
-            },
-            delete: async (colName, id) => {
-                const list = localDB.get(colName);
-                localDB.set(colName, list.filter(i => i.id !== id));
-            },
-            batchAdd: async (colName, items) => {
-                const list = localDB.get(colName);
-                const newItems = items.map((item, idx) => ({
-                    ...item,
-                    id: 'batch_' + Date.now() + '_' + idx,
-                    createdAt: item.createdAt || (Date.now() - idx * 100)
-                }));
-                localDB.set(colName, [...list, ...newItems]);
-            },
-            initDefaults: async (defaultData) => {
-                for (const [key, items] of Object.entries(defaultData)) {
-                    if (localDB.get(key).length === 0) {
-                        const newItems = items.map((i, idx) => ({ ...i, id: `init_${idx}`, createdAt: Date.now() - (idx * 1000) }));
-                        localDB.set(key, newItems);
+            window.signInAuth = async () => true; 
+            window.dbOps = {
+                getDocs: async (colName) => ({ docs: getLocal(colName).map(d => ({ id: d.id, data: () => d })) }),
+                addDoc: async (colName, data) => {
+                    const list = getLocal(colName);
+                    const newItem = { ...data, id: 'loc_' + Date.now(), createdAt: Date.now() };
+                    list.push(newItem);
+                    setLocal(colName, list);
+                    return newItem;
+                },
+                updateDoc: async (colName, id, data) => {
+                    const list = getLocal(colName);
+                    const idx = list.findIndex(i => i.id === id);
+                    if (idx !== -1) {
+                        list[idx] = { ...list[idx], ...data };
+                        setLocal(colName, list);
                     }
-                }
-            }
+                },
+                deleteDoc: async (colName, id) => {
+                    const list = getLocal(colName);
+                    setLocal(colName, list.filter(i => i.id !== id));
+                },
+                initBatch: async (dataObj) => {
+                    for (const [key, items] of Object.entries(dataObj)) {
+                        if (getLocal(key).length === 0) {
+                            const itemsWithId = items.map((i, idx) => ({ ...i, id: `init_${idx}`, createdAt: Date.now() - (idx * 1000) }));
+                            setLocal(key, itemsWithId);
+                        }
+                    }
+                },
+                batchAdd: async (colName, items) => {
+                    const list = getLocal(colName);
+                    const newItems = items.map((item, idx) => ({
+                        ...item,
+                        id: 'loc_batch_' + Date.now() + '_' + idx,
+                        createdAt: item.createdAt || (Date.now() - idx * 100)
+                    }));
+                    setLocal(colName, [...list, ...newItems]);
+                },
+                onAuth: (auth, cb) => { cb({ uid: 'local-user' }); return () => {}; }
+            };
         };
+        window.enableLocalMode();
     </script>
 
-    <!-- 2. Firebase SDKs -->
+    <!-- 2. Firebase SDKs (Async Module) -->
     <script type="module">
         (async () => {
             try {
-                if (typeof __firebase_config === 'undefined' || !__firebase_config) throw new Error("No Config");
+                // -----------------------------------------------------------
+                // ★★★ Github Pages 部署設定 ★★★
+                // 請將您的 Firebase Config 填入下方 userFirebaseConfig 物件中
+                // -----------------------------------------------------------
+                const userFirebaseConfig = {
+                    apiKey: "AIzaSyB-3Pl_9_lQUUyfEzULjgnfgB8Xbivo5rY",
+                    authDomain: "lab-website-40cb1.firebaseapp.com",
+                    projectId: "lab-website-40cb1",
+                    storageBucket: "lab-website-40cb1.firebasestorage.app",
+                    messagingSenderId: "44092173556",
+                    appId: "1:44092173556:web:c8283c28b229c01d4e42a1",
+                    measurementId: "G-MYBL65WHRM"
+                };
+
+                let firebaseConfig;
+                if (userFirebaseConfig.apiKey) {
+                    firebaseConfig = userFirebaseConfig; // 使用使用者填入的設定
+                } else if (typeof __firebase_config !== 'undefined') {
+                    firebaseConfig = JSON.parse(__firebase_config); // 使用環境變數 (Canvas 預覽用)
+                } else {
+                    throw new Error("Firebase config is missing"); // 兩者皆無，切換回本地模式
+                }
                 
                 const { initializeApp } = await import("https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js");
                 const { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } = await import("https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js");
                 const { getFirestore, collection, addDoc, getDocs, doc, updateDoc, deleteDoc, writeBatch } = await import("https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js");
 
-                const app = initializeApp(JSON.parse(__firebase_config));
-                const auth = getAuth(app);
-                const db = getFirestore(app);
-                const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-                
+                const app = initializeApp(firebaseConfig);
+                window.auth = getAuth(app);
+                window.db = getFirestore(app);
+                window.appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+                window.isLocal = false;
+
+                window.signInAuth = async () => {
+                    if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                        await signInWithCustomToken(window.auth, __initial_auth_token);
+                    } else {
+                        await signInAnonymously(window.auth);
+                    }
+                };
+
                 window.dbOps = {
-                    mode: 'FIREBASE',
-                    ready: true,
-                    signIn: async () => {
-                        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                            await signInWithCustomToken(auth, __initial_auth_token);
-                        } else {
-                            await signInAnonymously(auth);
-                        }
-                    },
-                    onAuth: (cb) => onAuthStateChanged(auth, cb),
-                    fetch: async (colName) => {
-                        const colRef = collection(db, 'artifacts', appId, 'public', 'data', colName);
-                        const snapshot = await getDocs(colRef);
-                        return snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
-                    },
-                    add: async (colName, data) => {
-                        const colRef = collection(db, 'artifacts', appId, 'public', 'data', colName);
-                        await addDoc(colRef, { ...data, createdAt: data.createdAt || Date.now() });
-                    },
-                    update: async (colName, id, data) => {
-                        const docRef = doc(db, 'artifacts', appId, 'public', 'data', colName, id);
-                        await updateDoc(docRef, data);
-                    },
-                    delete: async (colName, id) => {
-                        const docRef = doc(db, 'artifacts', appId, 'public', 'data', colName, id);
-                        await deleteDoc(docRef);
-                    },
-                    batchAdd: async (colName, items) => {
-                        const batch = writeBatch(db);
-                        const colRef = collection(db, 'artifacts', appId, 'public', 'data', colName);
-                        items.forEach((item, idx) => {
-                             const docRef = doc(colRef);
-                             const data = { ...item, createdAt: item.createdAt || (Date.now() - idx * 100) };
-                             batch.set(docRef, data);
-                        });
-                        await batch.commit();
-                    },
-                    initDefaults: async (defaultData) => {
-                        const batch = writeBatch(db);
-                        for (const [key, items] of Object.entries(defaultData)) {
-                            const colRef = collection(db, 'artifacts', appId, 'public', 'data', key);
+                    collection: (colName) => collection(window.db, 'artifacts', window.appId, 'public', 'data', colName),
+                    getDocs: getDocs,
+                    addDoc: addDoc,
+                    updateDoc: (colName, id, data) => updateDoc(doc(window.db, 'artifacts', window.appId, 'public', 'data', colName, id), data),
+                    deleteDoc: (colName, id) => deleteDoc(doc(window.db, 'artifacts', window.appId, 'public', 'data', colName, id)),
+                    initBatch: async (dataObj) => {
+                        const batch = writeBatch(window.db);
+                        for (const [key, items] of Object.entries(dataObj)) {
+                            const colRef = collection(window.db, 'artifacts', window.appId, 'public', 'data', key);
                             const snapshot = await getDocs(colRef);
                             if (snapshot.empty) {
                                 items.forEach((item, idx) => {
@@ -146,7 +141,18 @@
                             }
                         }
                         await batch.commit();
-                    }
+                    },
+                    batchAdd: async (colName, items) => {
+                        const batch = writeBatch(window.db);
+                        const colRef = collection(window.db, 'artifacts', window.appId, 'public', 'data', colName);
+                        items.forEach((item, idx) => {
+                             const docRef = doc(colRef);
+                             const data = { ...item, createdAt: item.createdAt || (Date.now() - idx * 100) };
+                             batch.set(docRef, data);
+                        });
+                        await batch.commit();
+                    },
+                    onAuth: onAuthStateChanged
                 };
                 console.log("🔥 Firebase Connected");
             } catch (e) {
@@ -387,6 +393,9 @@
             const [activeTab, setActiveTab] = useState('news');
             const [dataList, setDataList] = useState([]);
             const [loading, setLoading] = useState(false);
+            const [statusMsg, setStatusMsg] = useState('');
+            const [isPwdModalOpen, setIsPwdModalOpen] = useState(false);
+            const [isBatchModalOpen, setIsBatchModalOpen] = useState(false);
             const [viewingAlbum, setViewingAlbum] = useState(null); 
             const [isEditorOpen, setIsEditorOpen] = useState(false);
             const [editItem, setEditItem] = useState({});
@@ -462,7 +471,11 @@
                                 <button key={t} onClick={() => { setActiveTab(t); setViewingAlbum(null); }} className={`w-full text-left px-4 py-2 rounded ${activeTab===t ? 'bg-blue-600' : 'hover:bg-slate-700'}`}>{TAB_NAMES[t]}</button>
                             ))}
                         </nav>
-                        <button onClick={() => window.dbOps.initDefaults(defaultData).then(loadData)} className="mt-8 text-xs text-gray-400 hover:text-white">重置範例資料</button>
+                        <div className="mt-4 pt-4 border-t border-slate-700 space-y-2">
+                             <button onClick={() => setIsBatchModalOpen(true)} className="w-full bg-green-700 hover:bg-green-600 text-white px-4 py-2 rounded text-sm transition-colors">📋 批次匯入資料</button>
+                             <button onClick={() => setIsPwdModalOpen(true)} className="w-full bg-slate-700 hover:bg-slate-600 text-slate-200 px-4 py-2 rounded text-sm transition-colors">🔒 修改密碼</button>
+                             <button onClick={() => window.dbOps.initDefaults(defaultData).then(loadData)} className="w-full bg-slate-500 hover:bg-slate-600 text-white px-4 py-2 rounded text-sm transition-colors">初始化/重置資料庫</button>
+                        </div>
                     </div>
                     
                     <div className="flex-grow p-8 overflow-y-auto">
@@ -513,10 +526,11 @@
                     </div>
                     
                     {isEditorOpen && <EditorModal activeTab={activeTab} initData={editItem} onSave={handleSave} onBatchSave={handleBatchSave} onClose={() => setIsEditorOpen(false)} />}
+                    <ChangePasswordModal isOpen={isPwdModalOpen} onClose={() => setIsPwdModalOpen(false)} />
+                    <BatchImportModal isOpen={isBatchModalOpen} onClose={() => setIsBatchModalOpen(false)} activeTab={activeTab} onImport={handleBatchSave} />
                 </div>
             );
         };
-
         const root = ReactDOM.createRoot(document.getElementById('root'));
         root.render(<ErrorBoundary><AdminApp /></ErrorBoundary>);
     </script>
