@@ -9,7 +9,6 @@
     <script>
         window.onerror = function(msg, url, lineNo, columnNo, error) {
             console.error('Global Error:', msg, error);
-            // Ignore benign script errors from external CDNs
             if (msg.indexOf("Script error") > -1) return true;
             return false;
         };
@@ -20,31 +19,23 @@
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     
-    <!-- 1. Sync Fallback Logic (Unified API) -->
+    <!-- 1. Sync Fallback Logic -->
     <script>
         window.isLocal = true;
         window.appId = 'default-app-id';
         
-        // Define standard local operations to prevent crashes before Firebase loads
         window.enableLocalMode = () => {
             console.log("Initializing Local Mode...");
             window.isLocal = true;
-            
             const getLocal = (key) => {
                 try { return JSON.parse(localStorage.getItem('smsmp_' + key) || '[]'); } catch (e) { return []; }
             };
             const setLocal = (key, data) => localStorage.setItem('smsmp_' + key, JSON.stringify(data));
 
             window.signInAuth = async () => true; 
-            
-            // Unified API matching the Firebase implementation below
             window.dbOps = {
                 signIn: async () => true,
-                onAuth: (cb) => { 
-                    // Simulate auth delay slightly to allow UI to mount
-                    setTimeout(() => cb({ uid: 'local-admin', email: 'admin@local' }), 50); 
-                    return () => {}; 
-                },
+                onAuth: (cb) => { setTimeout(() => cb({ uid: 'local-admin', email: 'admin@local' }), 50); return () => {}; },
                 fetch: async (colName) => {
                     const data = getLocal(colName);
                     return Array.isArray(data) ? data : [];
@@ -87,7 +78,7 @@
                 }
             };
         };
-        // Initialize immediately
+        // Initialize local mode first (fallback)
         window.enableLocalMode();
     </script>
 
@@ -95,8 +86,10 @@
     <script type="module">
         (async () => {
             try {
-                // User provided config
-                const userConfig = {
+                // -----------------------------------------------------------
+                // ★★★ Firebase Config 設定 (已填入) ★★★
+                // -----------------------------------------------------------
+                const userFirebaseConfig = {
                     apiKey: "AIzaSyB-3Pl_9_lQUUyfEzULjgnfgB8Xbivo5rY",
                     authDomain: "lab-website-40cb1.firebaseapp.com",
                     projectId: "lab-website-40cb1",
@@ -106,9 +99,10 @@
                     measurementId: "G-MYBL65WHRM"
                 };
 
-                let firebaseConfig = userConfig;
-                // Fallback to environment variable if apiKey is placeholder (for preview environments)
-                if (userConfig.apiKey.includes("您的_API_KEY") && typeof __firebase_config !== 'undefined') {
+                let firebaseConfig = userFirebaseConfig;
+                
+                // Canvas 環境變數檢查 (僅在預覽環境使用，Github Pages 會使用上面的 userFirebaseConfig)
+                if (typeof __firebase_config !== 'undefined') {
                      firebaseConfig = JSON.parse(__firebase_config);
                 }
 
@@ -121,7 +115,7 @@
                 const db = getFirestore(app);
                 const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
                 
-                window.isLocal = false;
+                window.isLocal = false; // Firebase loaded successfully
 
                 window.signInAuth = async () => {
                     if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
@@ -178,6 +172,10 @@
                     }
                 };
                 console.log("🔥 Firebase Connected");
+                
+                // Force re-render if React already mounted in local mode
+                if (window.forceUpdateAuth) window.forceUpdateAuth();
+
             } catch (e) {
                 console.warn("⚠️ Firebase failed, staying in Local Mode", e);
             }
@@ -239,6 +237,16 @@
             const [u, setU] = useState('');
             const [p, setP] = useState('');
             const [err, setErr] = useState('');
+            
+            // Check connection status periodically for UI feedback
+            const [connected, setConnected] = useState(!window.isLocal);
+            useEffect(() => {
+                const interval = setInterval(() => {
+                    setConnected(!window.isLocal);
+                }, 1000);
+                return () => clearInterval(interval);
+            }, []);
+
             const handleSubmit = (e) => {
                 e.preventDefault();
                 const creds = getCredentials();
@@ -249,12 +257,24 @@
                 <div className="min-h-screen flex items-center justify-center bg-gray-100 p-4">
                     <div className="bg-white p-8 rounded-lg shadow-lg w-full max-w-sm border border-slate-200">
                         <h2 className="text-xl font-bold mb-6 text-center text-slate-800">後台登入</h2>
-                        {window.isLocal && <div className="mb-4 text-xs bg-yellow-100 text-yellow-800 p-2 rounded">注意：目前為本機模式 (Firebase 未連線)</div>}
+                        
+                        {!connected ? (
+                            <div className="mb-4 text-xs bg-yellow-100 text-yellow-800 p-2 rounded flex items-center">
+                                <span className="mr-2">⚠️</span> 
+                                <span>連線中或本機模式...<br/>(若在 GitHub 請稍候)</span>
+                            </div>
+                        ) : (
+                            <div className="mb-4 text-xs bg-green-100 text-green-800 p-2 rounded flex items-center">
+                                <span className="mr-2">✅</span> 
+                                <span>已連線至雲端資料庫</span>
+                            </div>
+                        )}
+
                         <form onSubmit={handleSubmit} className="space-y-4">
                             <input className="w-full border p-2 rounded" placeholder="帳號" value={u} onChange={e=>setU(e.target.value)} required />
                             <input className="w-full border p-2 rounded" type="password" placeholder="密碼" value={p} onChange={e=>setP(e.target.value)} required />
                             {err && <p className="text-red-500 text-center text-sm">{err}</p>}
-                            <button className="w-full bg-blue-600 text-white p-2 rounded hover:bg-blue-700">登入</button>
+                            <button className="w-full bg-blue-600 text-white p-2 rounded hover:bg-blue-700 transition-colors">登入</button>
                         </form>
                     </div>
                 </div>
@@ -542,7 +562,7 @@
                 return groups;
             }, [dataList, activeTab]);
 
-            const displayedList = useMemo(() => {
+            const displayList = useMemo(() => {
                 if (activeTab === 'gallery' && viewingAlbum) {
                     return (dataList || []).filter(d => (d.title || '(未命名)') === viewingAlbum);
                 }
@@ -550,10 +570,25 @@
             }, [dataList, activeTab, viewingAlbum]);
 
             useEffect(() => {
+                // Expose forceUpdate for module logic to trigger re-render on connection
+                window.forceUpdateAuth = () => {
+                    if (isLoggedIn) setUser({ uid: 'firebase-user' });
+                };
+
                 if (isLoggedIn) {
-                    const t = setTimeout(() => { if (!user) setUser({ uid: 'fallback' }); }, 3000);
-                    window.dbOps.signIn().catch(e => console.warn(e));
-                    window.dbOps.onAuth(u => { clearTimeout(t); if(u) setUser(u); });
+                    // Try to wait for firebase, but show UI immediately
+                    const t = setTimeout(() => { if (!user) setUser({ uid: 'loading' }); }, 500);
+                    window.dbOps.signIn().then(() => {
+                        window.dbOps.onAuth(u => { 
+                            clearTimeout(t); 
+                            if(u) {
+                                setUser(u);
+                            } else {
+                                // Local Mode fallback user
+                                if (window.isLocal) setUser({ uid: 'local' });
+                            }
+                        });
+                    });
                     return () => clearTimeout(t);
                 }
             }, [isLoggedIn]);
@@ -595,7 +630,7 @@
             const ResetDB = () => window.dbOps.initDefaults(defaultData).then(loadData);
 
             if (!isLoggedIn) return <LoginForm onLogin={() => setIsLoggedIn(true)} />;
-            if (!user) return <div className="min-h-screen flex items-center justify-center text-gray-500">連接資料庫中...</div>;
+            if (!user) return <div className="min-h-screen flex items-center justify-center text-gray-500">系統載入中...</div>;
 
             return (
                 <div className="min-h-screen flex flex-col md:flex-row">
@@ -639,7 +674,7 @@
                                     <table className="w-full text-left">
                                         <thead><tr className="border-b text-gray-500"><th className="p-3">標題 / 內容</th><th className="p-3">操作</th></tr></thead>
                                         <tbody>
-                                            {displayedList.map(item => (
+                                            {displayList.map(item => (
                                                 <tr key={item.id} className="border-b hover:bg-gray-50">
                                                     <td className="p-3">
                                                         <div className="font-bold">{item.title || item.name}</div>
@@ -652,7 +687,7 @@
                                                     </td>
                                                 </tr>
                                             ))}
-                                            {displayedList.length === 0 && <tr><td colSpan="2" className="p-4 text-center text-gray-400">無資料</td></tr>}
+                                            {displayList.length === 0 && <tr><td colSpan="2" className="p-4 text-center text-gray-400">無資料</td></tr>}
                                         </tbody>
                                     </table>
                                 )}

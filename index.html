@@ -5,12 +5,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>智慧製造與半導體材料加工實驗室 (SMSMP Lab)</title>
     
-    <!-- 0. Global Error Handler to suppress opaque Script Errors -->
+    <!-- 0. Global Error Handler -->
     <script>
         window.onerror = function(msg, url, lineNo, columnNo, error) {
             if (msg === 'Script error.' || msg.indexOf("Script error") > -1) {
                 console.warn('Ignored cross-origin script error:', url);
-                return true; // Prevent default error reporting
+                return true; 
             }
             return false;
         };
@@ -21,20 +21,16 @@
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script crossorigin src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
-    <!-- 1. Basic Setup & Fallback Logic (Run immediately) -->
+    <!-- 1. Sync Fallback Logic -->
     <script>
-        // Initialize global variables to prevent "undefined" errors
         window.isLocal = true;
-        window.appId = 'default-app-id'; // 確保前後台使用相同的 App ID
+        window.appId = 'default-app-id';
         
-        // Define Local Mode Fallback
         window.enableLocalMode = () => {
             console.log("Initializing Local Mode...");
             window.isLocal = true;
             const getLocal = (key) => {
-                try {
-                    return JSON.parse(localStorage.getItem('smsmp_' + key) || '[]');
-                } catch (e) { return []; }
+                try { return JSON.parse(localStorage.getItem('smsmp_' + key) || '[]'); } catch (e) { return []; }
             };
             
             window.initAuth = async () => true;
@@ -47,19 +43,15 @@
                 onAuth: (auth, cb) => { cb({ uid: 'local-guest' }); return () => {}; }
             };
         };
-
-        // Apply fallback immediately (will be overwritten if Firebase loads)
         window.enableLocalMode();
     </script>
 
-    <!-- 2. Firebase SDKs & Logic (Async Module) -->
+    <!-- 2. Firebase SDKs (Async Module) -->
     <script type="module">
         (async () => {
             try {
                 // -----------------------------------------------------------
-                // ★★★ Github Pages 部署設定 ★★★
-                // 請將您的 Firebase Config 填入下方 userFirebaseConfig 物件中
-                // 這樣在 Github Pages 上才能連線到雲端資料庫
+                // ★★★ Firebase Config 設定 (已填入) ★★★
                 // -----------------------------------------------------------
                 const userFirebaseConfig = {
                     apiKey: "AIzaSyB-3Pl_9_lQUUyfEzULjgnfgB8Xbivo5rY",
@@ -71,16 +63,11 @@
                     measurementId: "G-MYBL65WHRM"
                 };
 
-                let firebaseConfig;
-                if (userFirebaseConfig.apiKey) {
-                    firebaseConfig = userFirebaseConfig; // 使用使用者填入的設定
-                } else if (typeof __firebase_config !== 'undefined') {
-                    firebaseConfig = JSON.parse(__firebase_config); // 使用環境變數 (Canvas 預覽用)
-                } else {
-                    throw new Error("Firebase config is missing"); // 兩者皆無，切換回本地模式
+                let firebaseConfig = userFirebaseConfig;
+                if (typeof __firebase_config !== 'undefined') {
+                     firebaseConfig = JSON.parse(__firebase_config);
                 }
 
-                // Dynamic Import with precise error handling
                 const { initializeApp } = await import("https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js");
                 const { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } = await import("https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js");
                 const { getFirestore, collection, onSnapshot, query } = await import("https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js");
@@ -121,16 +108,13 @@
                     },
                     onAuth: onAuthStateChanged
                 };
-                
                 console.log("Firebase initialized successfully");
-
             } catch (e) {
-                console.error("Firebase initialization failed (Running in Local Mode):", e);
-                window.enableLocalMode();
+                console.warn("Firebase failed, staying in Local Mode", e);
             }
         })();
     </script>
-
+<!-- ... (樣式與 React 程式碼接續，請參照上一版本的前台樣式，這裡略過重複部分以節省空間，請直接複製上一版本的內容，僅替換掉 script 區塊即可。若需要完整檔案請告知) ... -->
     <style>
         body { font-family: "Microsoft JhengHei", "Heiti TC", sans-serif; }
         .reveal-section { opacity: 0; transform: translateY(30px); transition: all 0.8s cubic-bezier(0.5, 0, 0, 1); }
@@ -613,7 +597,7 @@
                 <p className="text-slate-500 text-sm mb-4">{labInfo.englishName}</p>
                 <div className="text-slate-400 text-xs relative inline-block">
                     © {new Date().getFullYear()} National Chin-Yi University of Technology. All Rights Reserved.
-                    <a href="./admin.html" className="absolute -right-6 top-0 text-slate-200 hover:text-slate-400 p-1" title="後台管理">
+                    <a href="./admin.html" className="absolute -right-6 top-0 text-slate-200 hover:text-slate-400 p-1 transition-colors" title="後台管理">
                         <Settings className="w-3 h-3" />
                     </a>
                 </div>
