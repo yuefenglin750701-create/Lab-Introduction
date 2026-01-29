@@ -9,6 +9,7 @@
     <script>
         window.onerror = function(msg, url, lineNo, columnNo, error) {
             console.error('Global Error:', msg, error);
+            // Ignore benign script errors from external CDNs
             if (msg.indexOf("Script error") > -1) return true;
             return false;
         };
@@ -19,30 +20,43 @@
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     
-    <!-- 1. Sync Fallback Logic -->
+    <!-- 1. Sync Fallback Logic (Unified API) -->
     <script>
         window.isLocal = true;
         window.appId = 'default-app-id';
         
+        // Define standard local operations to prevent crashes before Firebase loads
         window.enableLocalMode = () => {
             console.log("Initializing Local Mode...");
             window.isLocal = true;
+            
             const getLocal = (key) => {
                 try { return JSON.parse(localStorage.getItem('smsmp_' + key) || '[]'); } catch (e) { return []; }
             };
             const setLocal = (key, data) => localStorage.setItem('smsmp_' + key, JSON.stringify(data));
 
             window.signInAuth = async () => true; 
+            
+            // Unified API matching the Firebase implementation below
             window.dbOps = {
-                getDocs: async (colName) => ({ docs: getLocal(colName).map(d => ({ id: d.id, data: () => d })) }),
-                addDoc: async (colName, data) => {
+                signIn: async () => true,
+                onAuth: (cb) => { 
+                    // Simulate auth delay slightly to allow UI to mount
+                    setTimeout(() => cb({ uid: 'local-admin', email: 'admin@local' }), 50); 
+                    return () => {}; 
+                },
+                fetch: async (colName) => {
+                    const data = getLocal(colName);
+                    return Array.isArray(data) ? data : [];
+                },
+                add: async (colName, data) => {
                     const list = getLocal(colName);
                     const newItem = { ...data, id: 'loc_' + Date.now(), createdAt: Date.now() };
                     list.push(newItem);
                     setLocal(colName, list);
                     return newItem;
                 },
-                updateDoc: async (colName, id, data) => {
+                update: async (colName, id, data) => {
                     const list = getLocal(colName);
                     const idx = list.findIndex(i => i.id === id);
                     if (idx !== -1) {
@@ -50,30 +64,30 @@
                         setLocal(colName, list);
                     }
                 },
-                deleteDoc: async (colName, id) => {
+                delete: async (colName, id) => {
                     const list = getLocal(colName);
                     setLocal(colName, list.filter(i => i.id !== id));
-                },
-                initBatch: async (dataObj) => {
-                    for (const [key, items] of Object.entries(dataObj)) {
-                        if (getLocal(key).length === 0) {
-                            const itemsWithId = items.map((i, idx) => ({ ...i, id: `init_${idx}`, createdAt: Date.now() - (idx * 1000) }));
-                            setLocal(key, itemsWithId);
-                        }
-                    }
                 },
                 batchAdd: async (colName, items) => {
                     const list = getLocal(colName);
                     const newItems = items.map((item, idx) => ({
                         ...item,
-                        id: 'loc_batch_' + Date.now() + '_' + idx,
+                        id: 'batch_' + Date.now() + '_' + idx,
                         createdAt: item.createdAt || (Date.now() - idx * 100)
                     }));
                     setLocal(colName, [...list, ...newItems]);
                 },
-                onAuth: (auth, cb) => { cb({ uid: 'local-user' }); return () => {}; }
+                initDefaults: async (defaultData) => {
+                    for (const [key, items] of Object.entries(defaultData)) {
+                        if (getLocal(key).length === 0) {
+                            const newItems = items.map((i, idx) => ({ ...i, id: `init_${idx}`, createdAt: Date.now() - (idx * 1000) }));
+                            setLocal(key, newItems);
+                        }
+                    }
+                }
             };
         };
+        // Initialize immediately
         window.enableLocalMode();
     </script>
 
@@ -81,11 +95,8 @@
     <script type="module">
         (async () => {
             try {
-                // -----------------------------------------------------------
-                // ★★★ Github Pages 部署設定 ★★★
-                // 請將您的 Firebase Config 填入下方 userFirebaseConfig 物件中
-                // -----------------------------------------------------------
-                const userFirebaseConfig = {
+                // User provided config
+                const userConfig = {
                     apiKey: "AIzaSyB-3Pl_9_lQUUyfEzULjgnfgB8Xbivo5rY",
                     authDomain: "lab-website-40cb1.firebaseapp.com",
                     projectId: "lab-website-40cb1",
@@ -95,43 +106,66 @@
                     measurementId: "G-MYBL65WHRM"
                 };
 
-                let firebaseConfig;
-                if (userFirebaseConfig.apiKey) {
-                    firebaseConfig = userFirebaseConfig; // 使用使用者填入的設定
-                } else if (typeof __firebase_config !== 'undefined') {
-                    firebaseConfig = JSON.parse(__firebase_config); // 使用環境變數 (Canvas 預覽用)
-                } else {
-                    throw new Error("Firebase config is missing"); // 兩者皆無，切換回本地模式
+                let firebaseConfig = userConfig;
+                // Fallback to environment variable if apiKey is placeholder (for preview environments)
+                if (userConfig.apiKey.includes("您的_API_KEY") && typeof __firebase_config !== 'undefined') {
+                     firebaseConfig = JSON.parse(__firebase_config);
                 }
-                
+
                 const { initializeApp } = await import("https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js");
                 const { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } = await import("https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js");
                 const { getFirestore, collection, addDoc, getDocs, doc, updateDoc, deleteDoc, writeBatch } = await import("https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js");
 
                 const app = initializeApp(firebaseConfig);
-                window.auth = getAuth(app);
-                window.db = getFirestore(app);
-                window.appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+                const auth = getAuth(app);
+                const db = getFirestore(app);
+                const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+                
                 window.isLocal = false;
 
                 window.signInAuth = async () => {
                     if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                        await signInWithCustomToken(window.auth, __initial_auth_token);
+                        await signInWithCustomToken(auth, __initial_auth_token);
                     } else {
-                        await signInAnonymously(window.auth);
+                        await signInAnonymously(auth);
                     }
                 };
 
+                // Overwrite dbOps with Firebase version (Matching API)
                 window.dbOps = {
-                    collection: (colName) => collection(window.db, 'artifacts', window.appId, 'public', 'data', colName),
-                    getDocs: getDocs,
-                    addDoc: addDoc,
-                    updateDoc: (colName, id, data) => updateDoc(doc(window.db, 'artifacts', window.appId, 'public', 'data', colName, id), data),
-                    deleteDoc: (colName, id) => deleteDoc(doc(window.db, 'artifacts', window.appId, 'public', 'data', colName, id)),
-                    initBatch: async (dataObj) => {
-                        const batch = writeBatch(window.db);
-                        for (const [key, items] of Object.entries(dataObj)) {
-                            const colRef = collection(window.db, 'artifacts', window.appId, 'public', 'data', key);
+                    signIn: window.signInAuth,
+                    onAuth: (cb) => onAuthStateChanged(auth, cb),
+                    fetch: async (colName) => {
+                        const colRef = collection(db, 'artifacts', appId, 'public', 'data', colName);
+                        const snapshot = await getDocs(colRef);
+                        return snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+                    },
+                    add: async (colName, data) => {
+                        const colRef = collection(db, 'artifacts', appId, 'public', 'data', colName);
+                        await addDoc(colRef, { ...data, createdAt: data.createdAt || Date.now() });
+                    },
+                    update: async (colName, id, data) => {
+                        const docRef = doc(db, 'artifacts', appId, 'public', 'data', colName, id);
+                        await updateDoc(docRef, data);
+                    },
+                    delete: async (colName, id) => {
+                        const docRef = doc(db, 'artifacts', appId, 'public', 'data', colName, id);
+                        await deleteDoc(docRef);
+                    },
+                    batchAdd: async (colName, items) => {
+                        const batch = writeBatch(db);
+                        const colRef = collection(db, 'artifacts', appId, 'public', 'data', colName);
+                        items.forEach((item, idx) => {
+                             const docRef = doc(colRef);
+                             const data = { ...item, createdAt: item.createdAt || (Date.now() - idx * 100) };
+                             batch.set(docRef, data);
+                        });
+                        await batch.commit();
+                    },
+                    initDefaults: async (defaultData) => {
+                        const batch = writeBatch(db);
+                        for (const [key, items] of Object.entries(defaultData)) {
+                            const colRef = collection(db, 'artifacts', appId, 'public', 'data', key);
                             const snapshot = await getDocs(colRef);
                             if (snapshot.empty) {
                                 items.forEach((item, idx) => {
@@ -141,22 +175,11 @@
                             }
                         }
                         await batch.commit();
-                    },
-                    batchAdd: async (colName, items) => {
-                        const batch = writeBatch(window.db);
-                        const colRef = collection(window.db, 'artifacts', window.appId, 'public', 'data', colName);
-                        items.forEach((item, idx) => {
-                             const docRef = doc(colRef);
-                             const data = { ...item, createdAt: item.createdAt || (Date.now() - idx * 100) };
-                             batch.set(docRef, data);
-                        });
-                        await batch.commit();
-                    },
-                    onAuth: onAuthStateChanged
+                    }
                 };
                 console.log("🔥 Firebase Connected");
             } catch (e) {
-                console.warn("⚠️ Firebase failed, using LOCAL mode.");
+                console.warn("⚠️ Firebase failed, staying in Local Mode", e);
             }
         })();
     </script>
@@ -172,7 +195,7 @@
             static getDerivedStateFromError(error) { return { hasError: true }; }
             render() {
                 if (this.state.hasError) {
-                    return <div className="min-h-screen flex items-center justify-center bg-red-50"><div className="bg-white p-6 rounded shadow text-center text-red-600">系統發生錯誤，請重新整理</div></div>;
+                    return <div className="min-h-screen flex items-center justify-center bg-red-50"><div className="bg-white p-6 rounded shadow text-center text-red-600">系統發生錯誤，請重新整理頁面。<br/><span className="text-sm text-gray-400">(檢查 Console 獲取詳細資訊)</span></div></div>;
                 }
                 return this.props.children;
             }
@@ -206,8 +229,8 @@
             gallery: '生活寫真'
         };
 
-        const FolderIcon = () => (
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-16 h-16 text-yellow-400 mb-2 drop-shadow-sm group-hover:scale-110 transition-transform">
+        const FolderIcon = ({ className = "w-16 h-16 text-yellow-400 mb-2 drop-shadow-sm group-hover:scale-110 transition-transform" }) => (
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className={className}>
                 <path d="M19.5 21a3 3 0 0 0 3-3v-4.5a3 3 0 0 0-3-3h-15a3 3 0 0 0-3 3V18a3 3 0 0 0 3 3h15ZM1.5 10.146V6a3 3 0 0 1 3-3h5.379a2.25 2.25 0 0 1 1.59.659l2.122 2.121c.14.141.331.22.53.22H19.5a3 3 0 0 1 3 3v1.146A4.483 4.483 0 0 0 19.5 9h-15a4.483 4.483 0 0 0-3 1.146Z" />
             </svg>
         );
@@ -224,8 +247,9 @@
             };
             return (
                 <div className="min-h-screen flex items-center justify-center bg-gray-100 p-4">
-                    <div className="bg-white p-8 rounded-lg shadow-lg w-full max-w-sm">
-                        <h2 className="text-xl font-bold mb-6 text-center">後台登入</h2>
+                    <div className="bg-white p-8 rounded-lg shadow-lg w-full max-w-sm border border-slate-200">
+                        <h2 className="text-xl font-bold mb-6 text-center text-slate-800">後台登入</h2>
+                        {window.isLocal && <div className="mb-4 text-xs bg-yellow-100 text-yellow-800 p-2 rounded">注意：目前為本機模式 (Firebase 未連線)</div>}
                         <form onSubmit={handleSubmit} className="space-y-4">
                             <input className="w-full border p-2 rounded" placeholder="帳號" value={u} onChange={e=>setU(e.target.value)} required />
                             <input className="w-full border p-2 rounded" type="password" placeholder="密碼" value={p} onChange={e=>setP(e.target.value)} required />
@@ -241,6 +265,9 @@
             const [formData, setFormData] = useState({});
             const [galleryImages, setGalleryImages] = useState([]);
             const [coverIndex, setCoverIndex] = useState(0);
+            
+            // Custom input toggles
+            const [customInput, setCustomInput] = useState({ year: false, role: false, classYear: false, yearDisplay: false });
 
             useEffect(() => {
                 const d = { ...initData };
@@ -255,9 +282,35 @@
                     setGalleryImages(d.src ? [{src: d.src, id: 'init'}] : []);
                     setCoverIndex(0);
                 }
+                setCustomInput({ year: false, role: false, classYear: false, yearDisplay: false });
             }, [initData, activeTab]);
 
-            const handleChange = (e) => setFormData(prev => ({ ...prev, [e.target.name]: e.target.value }));
+            const handleChange = (e) => {
+                const { name, value } = e.target;
+                
+                // Helper to toggle custom input (Logic recovered)
+                const toggleCustom = (key, val) => {
+                    if (val === 'custom') {
+                        setCustomInput(prev => ({ ...prev, [key]: true }));
+                        setFormData(prev => ({ ...prev, [key === 'yearDisplay' ? 'year' : key]: '' }));
+                    } else {
+                        setCustomInput(prev => ({ ...prev, [key]: false }));
+                        setFormData(prev => ({ ...prev, [key === 'yearDisplay' ? 'year' : key]: val }));
+                    }
+                };
+
+                if (name === 'year_select') toggleCustom('year', value);
+                else if (name === 'role_select') toggleCustom('role', value);
+                else if (name === 'type_select') {
+                    if (value === 'other') setFormData(prev => ({ ...prev, type: '' }));
+                    else setFormData(prev => ({ ...prev, type: value }));
+                }
+                else if (name === 'classYear_select') toggleCustom('classYear', value);
+                else if (name === 'yearDisplay_select') toggleCustom('yearDisplay', value);
+                else {
+                    setFormData(prev => ({ ...prev, [name]: value }));
+                }
+            };
             
             const handleFiles = (e) => {
                 Array.from(e.target.files).forEach(file => {
@@ -304,7 +357,28 @@
 
             const isMember = activeTab === 'members';
             const isGallery = activeTab === 'gallery';
+            const isPI = formData.type === 'pi';
+            const isAlumni = formData.type === 'alumni';
+            const isStudent = ['master', 'phd'].includes(formData.type);
+
+            const yearOptions = [];
+            for (let y = 116; y >= 105; y--) yearOptions.push({ val: String(y), label: `民國 ${y} 年` });
+            for (let y = 2030; y >= 2016; y--) yearOptions.push({ val: String(y), label: `西元 ${y} 年` });
             
+            let currentYearSelectValue = 'custom';
+            if (!customInput.year && formData.year && yearOptions.some(o => o.val === formData.year)) { 
+                currentYearSelectValue = formData.year; 
+            }
+
+            let currentTypeSelect = 'government';
+            const predefinedTypes = ['government', 'industry', 'patent', 'competition', 'student_project'];
+            if (formData.type && predefinedTypes.includes(formData.type)) currentTypeSelect = formData.type; 
+            else if (formData.type) currentTypeSelect = 'other';
+            
+            const memberClassYears = [];
+            for (let y = 116; y >= 80; y--) memberClassYears.push(String(y));
+            const memberYearDisplays = ["碩一", "碩二", "碩三", "博一", "博二", "博三", "博四", "博五"];
+
             return (
                 <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onPaste={handlePaste}>
                     <div className="bg-white rounded-lg shadow-xl w-full max-w-xl max-h-[90vh] overflow-y-auto">
@@ -315,6 +389,8 @@
                                 <input required name={isMember ? 'name' : 'title'} value={(isMember ? formData.name : formData.title) || ''} onChange={handleChange} className="w-full border p-2 rounded" />
                                 {isGallery && <p className="text-xs text-gray-500 mt-1">相同標題的照片會自動歸類為同一本相簿。</p>}
                             </div>
+                            
+                            {/* Member Specific Fields */}
                             {isMember && (
                                 <div className="grid grid-cols-2 gap-4">
                                     <div>
@@ -327,23 +403,61 @@
                                         </select>
                                     </div>
                                     <div>
-                                        {formData.type === 'alumni' ? (
+                                        {isAlumni ? (
                                             <>
-                                                <label className="block text-sm font-bold mb-1">畢業級別 (e.g. 110)</label>
-                                                <input name="classYear" value={formData.classYear||''} onChange={handleChange} className="w-full border p-2 rounded" placeholder="110" />
+                                                <label className="block text-sm font-bold mb-1">畢業級別 (Class Year)</label>
+                                                {!customInput.classYear ? (
+                                                    <select name="classYear_select" value={memberClassYears.includes(formData.classYear) ? formData.classYear : 'custom'} onChange={handleChange} className="w-full border p-2 rounded">
+                                                        <option value="" disabled>請選擇年度</option>
+                                                        {memberClassYears.map(y => <option key={y} value={y}>{y}級</option>)}
+                                                        <option value="custom">自訂...</option>
+                                                    </select>
+                                                ) : (
+                                                    <div className="flex gap-2"><input name="classYear" value={formData.classYear || ''} onChange={handleChange} placeholder="e.g. 113" className="w-full border p-2 rounded" /><button type="button" onClick={() => setCustomInput(p=>({...p, classYear: false}))} className="px-2 bg-gray-200 rounded text-xs">選單</button></div>
+                                                )}
                                             </>
-                                        ) : (formData.type !== 'pi' && (
+                                        ) : (isStudent && (
                                             <>
-                                                <label className="block text-sm font-bold mb-1">年級 (e.g. 碩一)</label>
-                                                <select name="year" value={formData.year||''} onChange={handleChange} className="w-full border p-2 rounded">
-                                                    {["碩一","碩二","碩三","博一","博二","博三","博四","博五"].map(y=><option key={y} value={y}>{y}</option>)}
-                                                </select>
+                                                <label className="block text-sm font-bold mb-1">年級 (Grade)</label>
+                                                {!customInput.yearDisplay ? (
+                                                    <select name="yearDisplay_select" value={memberYearDisplays.includes(formData.year) ? formData.year : 'custom'} onChange={handleChange} className="w-full border p-2 rounded">
+                                                        <option value="" disabled>請選擇年級</option>
+                                                        {memberYearDisplays.map(y => <option key={y} value={y}>{y}</option>)}
+                                                        <option value="custom">自訂...</option>
+                                                    </select>
+                                                ) : (
+                                                    <div className="flex gap-2"><input name="year" value={formData.year || ''} onChange={handleChange} placeholder="e.g. 碩一" className="w-full border p-2 rounded" /><button type="button" onClick={() => setCustomInput(p=>({...p, yearDisplay: false}))} className="px-2 bg-gray-200 rounded text-xs">選單</button></div>
+                                                )}
                                             </>
                                         ))}
                                     </div>
                                 </div>
                             )}
+
+                            {/* News Date */}
                             {activeTab === 'news' && <input type="date" name="date" value={formData.date||''} onChange={handleChange} className="w-full border p-2 rounded" />}
+                            
+                            {/* Projects Fields */}
+                            {activeTab === 'projects' && (
+                                <>
+                                    <label className="block"><span className="text-sm font-bold">年度 (Year)</span>
+                                        {!customInput.year ? (
+                                            <select name="year_select" value={currentYearSelectValue} onChange={handleChange} className="w-full border p-2 rounded mt-1"><option value="" disabled>請選擇年度</option>{yearOptions.map(opt => <option key={opt.val} value={opt.val}>{opt.label}</option>)}<option value="custom">自訂/輸入日期範圍...</option></select>
+                                        ) : (
+                                            <div className="flex gap-2"><input name="year" value={formData.year || ''} onChange={handleChange} placeholder="e.g. 113" className="w-full border p-2 rounded mt-1" /><button type="button" onClick={() => setCustomInput(p=>({...p, year: false}))} className="px-2 bg-gray-200 rounded mt-1 text-xs">選單</button></div>
+                                        )}
+                                    </label>
+                                    <label className="block"><span className="text-sm font-bold">類型 (Type)</span>
+                                        <select name="type_select" value={currentTypeSelect} onChange={handleChange} className="w-full border p-2 rounded mt-1"><option value="government">教育部/國科會 (Government)</option><option value="industry">產學合作 (Industry)</option><option value="patent">專利 (Patent)</option><option value="competition">競賽獲獎 (Competition)</option><option value="student_project">學生專題 (Student Project)</option><option value="other">其他 (自訂分類)...</option></select>
+                                        {(currentTypeSelect === 'other') && <input name="type" value={formData.type || ''} onChange={handleChange} placeholder="自訂類型" className="w-full border p-2 rounded mt-2 bg-blue-50" />}
+                                    </label>
+                                    <input name="agency" placeholder="單位 (Agency)" value={formData.agency||''} onChange={handleChange} className="w-full border p-2 rounded" />
+                                    <input name="role" placeholder="擔任角色 (Role)" value={formData.role||''} onChange={handleChange} className="w-full border p-2 rounded" />
+                                    <textarea name="desc" placeholder="說明/專利號" value={formData.desc||''} onChange={handleChange} className="w-full border p-2 rounded" />
+                                </>
+                            )}
+
+                            {/* Gallery Upload */}
                             {isGallery ? (
                                 <div className="border-2 border-dashed p-4 rounded bg-gray-50">
                                     <div className="flex justify-between mb-2">
@@ -370,13 +484,30 @@
                                     </div>
                                 )
                             )}
-                            {!isGallery && !isMember && activeTab !== 'news' && (
+                            
+                            {/* Member / Common Fields */}
+                            {isMember && (
                                 <>
-                                    <input name="role" placeholder="擔任角色 / 說明" value={formData.role||formData.desc||''} onChange={handleChange} className="w-full border p-2 rounded" />
-                                    <input name="year" placeholder="年份" value={formData.year||''} onChange={handleChange} className="w-full border p-2 rounded" />
+                                    <label className="block"><span className="text-sm font-bold">{isPI ? '核心研究領域' : '研究主題'}</span><input name="research" value={formData.research || ''} onChange={handleChange} className="w-full border p-2 rounded mt-1"/></label>
+                                    <label className="block"><span className="text-sm font-bold">{isPI ? '學術簡介' : '詳細內容'}</span><textarea name="researchDetail" value={formData.researchDetail || ''} onChange={handleChange} className="w-full border p-2 rounded mt-1 h-20"/></label>
+                                    <input name="email" placeholder="Email" value={formData.email || ''} onChange={handleChange} className="w-full border p-2 rounded mt-1"/>
+                                    {isPI && <input name="phone" placeholder="電話" value={formData.phone || ''} onChange={handleChange} className="w-full border p-2 rounded mt-1"/>}
+                                    <textarea name="awards" placeholder={isPI ? '教學特色' : '獲獎紀錄'} value={formData.awards || ''} onChange={handleChange} className="w-full border p-2 rounded mt-1"/>
                                 </>
                             )}
-                            {isMember && <textarea name="research" placeholder="研究領域 / 簡介" value={formData.research||''} onChange={handleChange} className="w-full border p-2 rounded h-20" />}
+                            
+                            {activeTab === 'publications' && (
+                                <>
+                                    <input name="year" placeholder="年份" value={formData.year||''} onChange={handleChange} className="w-full border p-2 rounded"/>
+                                    <input name="venue" placeholder="期刊/研討會" value={formData.venue||''} onChange={handleChange} className="w-full border p-2 rounded"/>
+                                    <input name="authors" placeholder="作者" value={formData.authors||''} onChange={handleChange} className="w-full border p-2 rounded"/>
+                                </>
+                            )}
+                            
+                            {activeTab === 'gallery' && (
+                                <input name="desc" placeholder="相簿描述" value={formData.desc||''} onChange={handleChange} className="w-full border p-2 rounded" />
+                            )}
+
                             <div className="flex justify-end gap-2 pt-4">
                                 <button type="button" onClick={onClose} className="px-4 py-2 border rounded">取消</button>
                                 <button type="submit" className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">儲存</button>
@@ -411,7 +542,7 @@
                 return groups;
             }, [dataList, activeTab]);
 
-            const displayList = useMemo(() => {
+            const displayedList = useMemo(() => {
                 if (activeTab === 'gallery' && viewingAlbum) {
                     return (dataList || []).filter(d => (d.title || '(未命名)') === viewingAlbum);
                 }
@@ -458,6 +589,10 @@
                     loadData();
                 }
             };
+            
+            const ChangePwd = () => setIsPwdModalOpen(true);
+            const BatchImport = () => setIsBatchModalOpen(true);
+            const ResetDB = () => window.dbOps.initDefaults(defaultData).then(loadData);
 
             if (!isLoggedIn) return <LoginForm onLogin={() => setIsLoggedIn(true)} />;
             if (!user) return <div className="min-h-screen flex items-center justify-center text-gray-500">連接資料庫中...</div>;
@@ -472,9 +607,9 @@
                             ))}
                         </nav>
                         <div className="mt-4 pt-4 border-t border-slate-700 space-y-2">
-                             <button onClick={() => setIsBatchModalOpen(true)} className="w-full bg-green-700 hover:bg-green-600 text-white px-4 py-2 rounded text-sm transition-colors">📋 批次匯入資料</button>
-                             <button onClick={() => setIsPwdModalOpen(true)} className="w-full bg-slate-700 hover:bg-slate-600 text-slate-200 px-4 py-2 rounded text-sm transition-colors">🔒 修改密碼</button>
-                             <button onClick={() => window.dbOps.initDefaults(defaultData).then(loadData)} className="w-full bg-slate-500 hover:bg-slate-600 text-white px-4 py-2 rounded text-sm transition-colors">初始化/重置資料庫</button>
+                             <button onClick={BatchImport} className="w-full bg-green-700 hover:bg-green-600 text-white px-4 py-2 rounded text-sm transition-colors">📋 批次匯入資料</button>
+                             <button onClick={ChangePwd} className="w-full bg-slate-700 hover:bg-slate-600 text-slate-200 px-4 py-2 rounded text-sm transition-colors">🔒 修改密碼</button>
+                             <button onClick={ResetDB} className="w-full bg-slate-500 hover:bg-slate-600 text-white px-4 py-2 rounded text-sm transition-colors">初始化/重置資料庫</button>
                         </div>
                     </div>
                     
@@ -504,7 +639,7 @@
                                     <table className="w-full text-left">
                                         <thead><tr className="border-b text-gray-500"><th className="p-3">標題 / 內容</th><th className="p-3">操作</th></tr></thead>
                                         <tbody>
-                                            {displayList.map(item => (
+                                            {displayedList.map(item => (
                                                 <tr key={item.id} className="border-b hover:bg-gray-50">
                                                     <td className="p-3">
                                                         <div className="font-bold">{item.title || item.name}</div>
@@ -517,7 +652,7 @@
                                                     </td>
                                                 </tr>
                                             ))}
-                                            {displayList.length === 0 && <tr><td colSpan="2" className="p-4 text-center text-gray-400">無資料</td></tr>}
+                                            {displayedList.length === 0 && <tr><td colSpan="2" className="p-4 text-center text-gray-400">無資料</td></tr>}
                                         </tbody>
                                     </table>
                                 )}
