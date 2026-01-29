@@ -577,7 +577,7 @@
 
                 if (isLoggedIn) {
                     // Try to wait for firebase, but show UI immediately
-                    const t = setTimeout(() => { if (!user) setUser({ uid: 'loading' }); }, 500);
+                    const t = setTimeout(() => { if (!user) setUser({ uid: 'fallback' }); }, 500);
                     window.dbOps.signIn().then(() => {
                         window.dbOps.onAuth(u => { 
                             clearTimeout(t); 
