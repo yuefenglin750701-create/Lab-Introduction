@@ -24,30 +24,13 @@
         window.isLocal = true;
         window.appId = 'default-app-id';
         
-        // Helper to check size safety
-        const checkQuota = (data) => {
-            try {
-                const json = JSON.stringify(data);
-                const size = new Blob([json]).size;
-                console.log(`Current Data Size: ${(size/1024).toFixed(2)} KB`);
-                if (size > 4.8 * 1024 * 1024) { 
-                    throw new Error("本機儲存空間已滿 (5MB)。請刪除舊資料或使用 Firebase 雲端模式。");
-                }
-            } catch(e) {
-                throw e;
-            }
-        };
-
         window.enableLocalMode = () => {
             console.log("Initializing Local Mode...");
             window.isLocal = true;
             const getLocal = (key) => {
                 try { return JSON.parse(localStorage.getItem('smsmp_' + key) || '[]'); } catch (e) { return []; }
             };
-            const setLocal = (key, data) => {
-                checkQuota(data);
-                localStorage.setItem('smsmp_' + key, JSON.stringify(data));
-            };
+            const setLocal = (key, data) => localStorage.setItem('smsmp_' + key, JSON.stringify(data));
 
             window.signInAuth = async () => true; 
             window.dbOps = {
@@ -60,8 +43,8 @@
                 add: async (colName, data) => {
                     const list = getLocal(colName);
                     const newItem = { ...data, id: 'loc_' + Date.now(), createdAt: Date.now() };
-                    const newList = [...list, newItem];
-                    setLocal(colName, newList);
+                    list.push(newItem);
+                    setLocal(colName, list);
                     return newItem;
                 },
                 update: async (colName, id, data) => {
@@ -116,6 +99,7 @@
                 };
 
                 let firebaseConfig = userFirebaseConfig;
+                // 環境變數覆蓋 (僅預覽用)
                 if (typeof __firebase_config !== 'undefined') {
                      // firebaseConfig = JSON.parse(__firebase_config);
                 }
@@ -128,7 +112,7 @@
                 window.auth = getAuth(app);
                 window.db = getFirestore(app);
                 window.appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-                window.isLocal = false; 
+                window.isLocal = false; // Firebase loaded successfully
 
                 window.signInAuth = async () => {
                     if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
@@ -138,6 +122,7 @@
                     }
                 };
 
+                // Overwrite dbOps with Firebase version (Matching API)
                 window.dbOps = {
                     signIn: window.signInAuth,
                     onAuth: (cb) => onAuthStateChanged(window.auth, cb),
@@ -184,6 +169,8 @@
                     }
                 };
                 console.log("🔥 Firebase Connected");
+                
+                // Force re-render if React already mounted in local mode
                 if (window.forceUpdateAuth) window.forceUpdateAuth();
 
             } catch (e) {
@@ -221,12 +208,72 @@
 
         const updateCredentials = (u, p) => { localStorage.setItem(CRED_KEY_USER, u); localStorage.setItem(CRED_KEY_PASS, p); };
 
+        // ★★★ 已更新為您上傳檔案中的真實資料 ★★★
         const defaultData = {
-            news: [{ date: "2025-11-06", title: "榮獲台灣精密工程學會 專題與論文獎 佳作", tag: "Award" }],
-            projects: [{ type: "government", year: "2025", title: "NSTC-114 計畫", role: "主持人" }],
-            members: [{ type: 'pi', name: "林岳鋒", year: "", research: "創新高效能加工" }],
+            news: [
+                { date: "2025-11-06", title: "114年 台灣精密工程學會‧東台集團【精密工程專題與論文獎】，榮獲研究論文獎佳作", tag: "Award" },
+                { date: "2025-11-06", title: "114年 台灣精密工程學會‧東台集團【精密工程專題與論文獎】，榮獲大專專題獎佳作", tag: "Award" },
+                { date: "2025-06-18", title: "114年台中精機盃 CNC第三屆全國多軸機組技能競賽，榮獲第六名", tag: "Award" },
+                { date: "2024-06-02", title: "113年台中精機盃 CNC第二屆全國多軸機技能競賽，榮獲第三名", tag: "Award" },
+                { date: "2023-12-01", title: "2023年中國機械工程學會第40屆全國學術研討會暨學生論文發表競賽，榮獲國科會機械固力與熱流學門第三名", tag: "Award" },
+                { date: "2023-10-28", title: "2023年『CTTT 2023 第六屆臺灣磨潤科技研討會』，榮獲特別獎", tag: "Award" },
+                { date: "2023-10-14", title: "2023年第十二屆中興大學『精密工具機與智慧化技術』專題作競賽，榮獲全國第二名", tag: "Award" },
+                { date: "2023-04-28", title: "2023年『ISME第八屆台灣機電工程國際學會全國學術研討會』，榮獲先進複合材料論壇最佳論文獎", tag: "Award" },
+                { date: "2023-04-16", title: "112年『台中精機盃CNC多軸機技能競賽』，榮獲全國第七名", tag: "Award" },
+                { date: "2020-11-20", title: "2020年智慧機械 SMB APP 競賽，榮獲佳作", tag: "Award" },
+                { date: "2020-11-07", title: "2020年『全國磨潤科技實務技術競賽』，榮獲最佳技術呈現獎", tag: "Award" },
+                { date: "2020-10-15", title: "2020年『全國三菱電機CNC智能APP創意開發競賽』，榮獲第一名", tag: "Award" },
+                { date: "2020-09-26", title: "2020年第九屆中興大學『精密工具機與智慧化技術』專題實作競賽，榮獲第二名", tag: "Award" },
+                { date: "2020-08-28", title: "2020年台灣工程國際學會全國學術研討會福星熱能創意競賽，榮獲佳作", tag: "Award" }
+            ],
+            projects: [
+                // 專利
+                { type: "patent", year: "2024/04/21", title: "晶錠切割裝置", agency: "I840267", role: "發明人: 林岳鋒、蔡明義、嚴仕育、劉萓姍" },
+                { type: "patent", year: "2021/10/11", title: "自動擠膏拋光刀把", agency: "I742924", role: "發明人: 蔡明義、郭俊麟、林岳鋒、黃守正" },
+                { type: "patent", year: "2021/06/01", title: "自動對刀裝置以及磨床", agency: "M612712", role: "發明人: 蔡明義、林岳鋒、陳俊延" },
+                { type: "patent", year: "2019/04/21", title: "可調式壓彈簧刀把", agency: "I656941", role: "發明人: 蔡明義、郭俊麟、林岳鋒" },
+                // 國科會
+                { type: "government", year: "114/06/01-115/05/31", title: "高長徑比減振車刀桿設計與智能搪孔加工參數優化系統開發", agency: "NSTC-114-2622-E-167-003", role: "計畫主持人" },
+                { type: "government", year: "113/08/01-114/07/31", title: "應用倒傳遞類神經網路結合超音波震動輔助與訊號擷取分析技術於微銑削加工單晶碳化矽晶碇之研究", agency: "NSTC-113-2221-E-167-027", role: "計畫主持人" },
+                { type: "government", year: "113/02/01-114/01/31", title: "難切削加工技術與製程開發產學聯盟(3/3)", agency: "NSTC-113-2622-8-167-001-TE3", role: "計畫主持人" },
+                { type: "government", year: "112/06/01-113/05/31", title: "高長徑比(L/D=12)減震刀桿設計開發", agency: "NSTC-112-2622-E-167-003", role: "計畫主持人" },
+                { type: "government", year: "112/02/01-113/01/31", title: "難削材加工技術與製程開發產學聯盟(2/3)", agency: "NSTC-112-2622-8-167-001-TE3", role: "計畫主持人" },
+                // 產學合作 (節錄部分代表性)
+                { type: "industry", year: "114/02/14 ~ 114/11/30", title: "液靜壓磨床之AI自適應加工參數優化與智慧刀具磨損補償系統開發", agency: "大光長榮機械", role: "計畫主持人" },
+                { type: "industry", year: "114/02/14 ~ 114/11/30", title: "智慧多軸工具機加工能效管理與內藏式主軸冷卻技術優化研究", agency: "凱柏精密機械", role: "計畫主持人" },
+                { type: "industry", year: "113/09/01 ~ 114/05/31", title: "適用於小薄晶片之高取片良率頂針組開發計畫", agency: "豪峰科技", role: "計畫主持人" },
+                { type: "industry", year: "113/06/01 ~ 114/05/31", title: "線切割高效節能產線規劃及驗證", agency: "立泉線切割", role: "計畫主持人" },
+                { type: "industry", year: "113/05/01 ~ 113/12/31", title: "半導體國際連結創新賦能計劃", agency: "台灣平坦化應用技術協會", role: "計畫主持人" }
+            ],
+            members: [
+                { 
+                    type: 'pi', 
+                    name: "林岳鋒 (Dr. Yan-Fa Lin)", 
+                    year: "", 
+                    research: "創新高效能加工, 研磨/拋光加工技術開發, 智慧製造技術開發, 線上加工感測訊號即時分析診斷回朔控制, 大數據加工資料庫探勘", 
+                    researchDetail: "林岳鋒副教授現任國立勤益科技大學機械工程系副主任。研究專長為非傳統加工技術、智慧製造感測、加工品質評估與材料殘餘應力分析。其研究結合實際加工實驗、即時感測與資料分析方法，應用於高硬度材料與半導體製程品質提升。", 
+                    email: "yflin@ncut.edu.tw", 
+                    phone: "04-23924505 分機 7173",
+                    awards: "強調「實機操作導向 (Machine-based Learning)」與「製程數據分析」，引導學生由「現象 → 模型 → 驗證」建立工程判斷能力。", 
+                    photo: "391692351_7466255803389344_4203488068870191778_n.jpg",
+                    pdfs: [] 
+                }
+                // 學生資料保留範例，因文件中無詳細名單
+            ],
             gallery: [],
-            publications: [{ year: "2025", title: "Scalable Real-time Energy Monitoring...", venue: "Sensors" }]
+            publications: [
+                { year: "To be published", title: "Scalable Real-time Energy Monitoring, Analysis, and Optimization in Five-axis Machine Tools: An Industrial Internet of Energy-based Approach", venue: "Sensors and Materials", authors: "Swami Nath Maurya, Kun-Ying Li, Windu Aditya Nur Faeza, Yue-Feng Lin" },
+                { year: "2025/10", title: "Geometric-overlap Modeling and Sweep Uniformity Optimization of Fixed Diamond Conditioning Disks for Chemical Mechanical Planarization", venue: "Sensors and Materials 37(10)", authors: "Yu-Chen Wang, Hong-Hui Lian, Yue-Feng Lin, Ming-Yi Tsai" },
+                { year: "2025/05", title: "Raman-Based Residual Stress Measurement and Defect Evaluation in Multistage-Processed 4H-SiC Wafers", venue: "Materials Today", authors: "Yu-Chen Wang, Hong-Hui Lian, Yue-Feng Lin, Ming-Yi Tsai" },
+                { year: "2024/12", title: "Optimization of surface roughness and cylindricity using the Taguchi method in boring of S45C steel with tungsten steel and phosphor bronze damping materials", venue: "Int. J. Adv. Manuf. Tech.", authors: "Yue-Feng Lin*, Pei-Yu Lai, Guan-Yu Chen, Zi-Peng Zhang" },
+                { year: "2024/09", title: "On-machine Fabrication of Boron-doped Polycrystalline Diamond Cutting Tools by Combining Wire Electrical Discharge Machining and Abrasive Grinding", venue: "Sensors and Materials 36(9)", authors: "Yue-Feng Lin*, Pei-Yu Lai, Yuan-Xiu Luo" },
+                { year: "2024/09", title: "Dissipation Energy as a Method for Sensing the Tribology Mechanism", venue: "Sensors and Materials 36(9)", authors: "Shih-Chen Shi*, Tao-Hsing Chen, Chih-Chia Wang, Hao-Fu Zhang, Yue-Feng Lin, Dieter Rahmadiawan" },
+                { year: "2022/11", title: "Aluminum and alumina/MoS2/cellulose derivative composite: design and performance", venue: "Materials Research Express 9(11)", authors: "Shih-Chen Shi*, Shia-Seng Pek, Yue-Feng Lin" },
+                { year: "2022/06", title: "Electrical Properties of Spin-coated Indium Tin Oxide for Photosensor Applications", venue: "Sensors and Materials 34(6)", authors: "Shih-Chen Shi*, Jian-An Chen, Yue-Feng Lin, Chih-Chia Wang" },
+                { year: "2021/10", title: "Monitoring of Grinding Status of Alumina Grinding Wheel Based on Short-time Fourier Transform", venue: "Sensors and Materials 33(10)", authors: "Kun-Ying Li, Yue-Feng Lin, Ming-Yi Tsai*, I-Cheng Chiu, Jyun-Yan Chen" },
+                { year: "2021/05", title: "Stator flux oriented multiple sliding-mode speed control design of induction motor drives", venue: "Advances in Mechanical Engineering 13(5)", authors: "Hsiu-Ming Wu*, Yue-Feng Lin, Chien-Hsu Chen" },
+                { year: "2020/12", title: "Surface Characterization and Tribological Behavior of Graphene-Reinforced Cellulose Composites Prepared by Large-Area Spray Coating on Flexible Substrate", venue: "Coatings 10(12)", authors: "Shih-Chen Shi*, Chih-Chia Wang, Yung-Chen Cheng, Yue-Feng Lin" }
+            ]
         };
 
         const TAB_NAMES = { news: '最新消息', projects: '歷年計畫', members: '成員管理', publications: '發表論文', gallery: '生活寫真' };
@@ -321,6 +368,7 @@
             useEffect(() => {
                 const d = { ...initData };
                 if (activeTab === 'members' && !d.type) d.type = 'master';
+                // Initialize default values for new items
                 if (!d.id) {
                     if (activeTab === 'projects') d.type = 'government';
                     if (activeTab === 'members') d.year = '碩一';
@@ -487,10 +535,8 @@
                                 </div>
                             )}
 
-                            {/* News Date */}
                             {activeTab === 'news' && <input type="date" name="date" value={formData.date||''} onChange={handleChange} className="w-full border p-2 rounded" />}
                             
-                            {/* Projects Fields */}
                             {activeTab === 'projects' && (
                                 <>
                                     <label className="block"><span className="text-sm font-bold">年度</span>
